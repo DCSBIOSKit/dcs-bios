@@ -58,7 +58,15 @@ if __name__ == '__main__':
 
                 elif s is slave_socket:
                     data, slave_addr = slave_socket.recvfrom(BUFFER_SIZE)
-                    parsed_data = json.loads(data)
+                    parsed_data = json.loads(data.decode())  # Added .decode() to convert bytes to string before JSON parsing
+                    message_base64 = parsed_data.get('message', None)  # Changed from 'id' to 'message'
+
+                    if message_base64:
+                        # Decode the base64 data and send it to DCS-BIOS
+                        decoded_data = base64.b64decode(message_base64)
+                        dcs_socket.sendto(decoded_data, ('localhost', 7778))
+                        print(f"Forwarded message to DCS-BIOS: {decoded_data}")
+
                     slave_id = parsed_data.get('id', 'Unknown')
                     print(f"Received connection from {slave_id} at address {slave_addr}")
 
