@@ -3,6 +3,7 @@ import socket
 import json
 import base64
 import select
+import time
 
 def get_ip_address():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -13,7 +14,6 @@ def get_ip_address():
 
 slave_dict = {}  # Dictionary to store slave addresses and IDs
 
-# Setup DCS-BIOS UDP Socket
 IP_ADDRESS = "0.0.0.0"
 UDP_PORT = 5010
 BUFFER_SIZE = 4096
@@ -47,33 +47,45 @@ if __name__ == '__main__':
             
             for s in readable_sockets:
                 if s is dcs_socket:
-                    # Receive DCS-BIOS Data
                     dcs_data, _ = dcs_socket.recvfrom(BUFFER_SIZE)
                     
                     for slave_addr in slave_dict.keys():
                         encoded_data = base64.b64encode(dcs_data).decode()
                         message = json.dumps({'message': encoded_data})
                         slave_socket.sendto(message.encode(), slave_addr)
-                        print(f"Sent {message} to {slave_dict[slave_addr]} at address {slave_addr}")
+                        print(f"Sent {message} to {slave_dict[slave_addr]['id']} at address {slave_addr}")
 
                 elif s is slave_socket:
                     data, slave_addr = slave_socket.recvfrom(BUFFER_SIZE)
-                    parsed_data = json.loads(data.decode())  # Added .decode() to convert bytes to string before JSON parsing
-                    message_base64 = parsed_data.get('message', None)  # Changed from 'id' to 'message'
+                    parsed_data = json.loads(data.decode())
+                    message_base64 = parsed_data.get('message', None)
+                    slave_id = parsed_data.get('id', 'Unknown')
 
                     if message_base64:
-                        # Decode the base64 data and send it to DCS-BIOS
                         decoded_data = base64.b64decode(message_base64)
                         dcs_socket.sendto(decoded_data, ('localhost', 7778))
                         print(f"Forwarded message to DCS-BIOS: {decoded_data}")
 
-                    slave_id = parsed_data.get('id', 'Unknown')
-                    print(f"Received connection from {slave_id} at address {slave_addr}")
+                    keep_alive = parsed_data.get('keep-alive', None)
+                    if keep_alive:
+                        slave_dict[slave_addr] = {'id': slave_id, 'last_received': int(time.time() * 1000)}
+                        print(f"Received keep-alive from {keep_alive} at address {slave_addr}")
 
                     if slave_addr not in slave_dict:
-                        slave_dict[slave_addr] = slave_id
+                        slave_dict[slave_addr] = {'id': slave_id, 'last_received': int(time.time() * 1000)}
                         message = json.dumps({'message': 'Hello, World'})
                         slave_socket.sendto(message.encode(), slave_addr)
+                        print(f"Received connection from {slave_id} at address {slave_addr}")
+            
+            # Check for stale slaves
+            current_time = int(time.time() * 1000)
+            stale_slave_keys = [slave_addr for slave_addr, slave_info in slave_dict.items()
+                                if current_time - slave_info['last_received'] > 2000]
+            
+            for key in stale_slave_keys:
+                print(f"Removing stale slave {slave_dict[key]['id']} at address {key}")
+                del slave_dict[key]
+            
     except KeyboardInterrupt:
         print("Kthxbai")
     finally:
