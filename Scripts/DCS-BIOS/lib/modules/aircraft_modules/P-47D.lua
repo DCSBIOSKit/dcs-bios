@@ -1,6 +1,6 @@
 module("P-47D", package.seeall)
 
-local Module = require("Module")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class P_47D: Module
 local P_47D = Module:new("P-47D", 0x5200, { "P-47D-30", "P-47D-30bl1", "P-47D-40" })
@@ -249,5 +249,7 @@ P_47D:defineBitFromDrawArgument("EXT_LANDING_LIGHT", 208, "External Aircraft Mod
 P_47D:defineBitFromDrawArgument("EXT_WOW_TAIL", 1, "External Aircraft Model", "Weight ON Wheels Tail Gear")
 P_47D:defineBitFromDrawArgument("EXT_WOW_RIGHT", 4, "External Aircraft Model", "Weight ON Wheels Right Gear")
 P_47D:defineBitFromDrawArgument("EXT_WOW_LEFT", 6, "External Aircraft Model", "Weight ON Wheels Left Gear")
+
+P_47D:defineReadWriteRadio("VHF_RADIO", 23, 7, 3, 1000, "VHF RADIO")
 
 return P_47D

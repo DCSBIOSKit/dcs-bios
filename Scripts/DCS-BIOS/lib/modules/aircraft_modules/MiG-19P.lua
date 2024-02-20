@@ -1,6 +1,6 @@
 module("MiG-19P", package.seeall)
 
-local Module = require("Module")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class MiG_19P: Module
 local MiG_19P = Module:new("MiG-19P", 0x1600, { "MiG-19P" })
@@ -351,5 +351,7 @@ MiG_19P:defineBitFromDrawArgument("EXT_POSITION_LIGHT_RIGHT", 192, "External Air
 MiG_19P:defineBitFromDrawArgument("EXT_WOW_NOSE", 1, "External Aircraft Model", "Weight ON Wheels Nose Gear")
 MiG_19P:defineBitFromDrawArgument("EXT_WOW_RIGHT", 4, "External Aircraft Model", "Weight ON Wheels Right Gear")
 MiG_19P:defineBitFromDrawArgument("EXT_WOW_LEFT", 6, "External Aircraft Model", "Weight ON Wheels Left Gear")
+
+MiG_19P:defineReadWriteRadio("RSIU4V_RADIO", 17, 7, 3, 1000, "RSIU-4V Radio")
 
 return MiG_19P

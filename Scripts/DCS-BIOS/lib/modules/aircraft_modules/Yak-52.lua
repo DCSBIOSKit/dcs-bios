@@ -1,6 +1,6 @@
 module("Yak-52", package.seeall)
 
-local Module = require("Module")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class Yak_52: Module
 local Yak_52 = Module:new("Yak-52", 0x2000, { "Yak-52" })
@@ -305,5 +305,7 @@ Yak_52:defineString("BAKLAN5_FREQ", getBaklan5Frequency, 7, "BAKLAN-5", "Fore VH
 
 Yak_52:defineFloat("FRONT_CANOPY_POS", 264, { 0, 1 }, "Gauges", "FRONT Canopy Position")
 Yak_52:defineFloat("REAR_CANOPY_POS", 268, { 0, 1 }, "Gauges", "REAR Door Position")
+
+Yak_52:defineReadWriteRadio("LANDYSH5_RADIO", 27, 7, 3, 1000, "LANDYSh-5 Radio")
 
 return Yak_52

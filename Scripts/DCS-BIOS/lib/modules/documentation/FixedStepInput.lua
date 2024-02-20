@@ -1,6 +1,6 @@
 module("FixedStepInput", package.seeall)
 
-local InputType = require("InputType")
+local InputType = require("Scripts.DCS-BIOS.lib.modules.documentation.InputType")
 
 --- @class FixedStepInput: Input
 local FixedStepInput = {}
@@ -9,6 +9,8 @@ local FixedStepInput = {}
 --- @param description string
 --- @return FixedStepInput
 function FixedStepInput:new(description)
+	assert(description ~= nil)
+
 	--- @type FixedStepInput
 	local o = {
 		interface = InputType.fixed_step,

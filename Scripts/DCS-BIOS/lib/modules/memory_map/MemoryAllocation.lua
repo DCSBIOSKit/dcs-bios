@@ -1,5 +1,7 @@
 module("MemoryAllocation", package.seeall)
 
+local Log = require("Scripts.DCS-BIOS.lib.common.Log")
+
 --- @class MemoryAllocation
 --- @field address integer the memory address
 --- @field maxValue integer the maximum value stored at this memory location
@@ -8,6 +10,7 @@ module("MemoryAllocation", package.seeall)
 --- @field mask integer TODO
 --- @field shiftBy integer TODO
 --- @field value integer? the current value
+--- @field private debug_name? string the human-readable name to display for this allocation in logs
 local MemoryAllocation = {}
 
 --- Creates a new memory allocation
@@ -15,8 +18,9 @@ local MemoryAllocation = {}
 --- @param entry MemoryMapEntry
 --- @param shift_by number
 --- @param bits_required number
+--- @param debug_name string? the human-readable name to display for this allocation in logs
 --- @return MemoryAllocation
-function MemoryAllocation:new(max_value, entry, shift_by, bits_required)
+function MemoryAllocation:new(max_value, entry, shift_by, bits_required, debug_name)
 	--- @type MemoryAllocation
 	local o = {
 		address = entry.address,
@@ -25,6 +29,7 @@ function MemoryAllocation:new(max_value, entry, shift_by, bits_required)
 		multiplier = math.pow(2, shift_by),
 		mask = (math.pow(2, bits_required) - 1) * math.pow(2, shift_by),
 		shiftBy = shift_by,
+		debug_name = debug_name,
 	}
 	setmetatable(o, self)
 	self.__index = self
@@ -44,19 +49,23 @@ function MemoryAllocation:setValue(value)
 	end
 	assert(self.maxValue)
 	assert(value)
-	value = math.floor(value)
-	if value < 0 then
-		BIOS.log(string.format("Util.lua: value %f is too small for address %d mask %d", value, self.address, self.mask))
+
+	-- check if value is close enough to our min that it could be a rounding error
+	local clean_value = value < 0 and value + 0.01 >= 0 and 0 or value
+
+	clean_value = math.floor(clean_value)
+	if clean_value < 0 then
+		Log:log_error(string.format("MemoryAllocation.lua: value %f (originally %f) is too small for %s (address %d mask %d)", clean_value, value, self.debug_name or "n/a", self.address, self.mask))
 		return
 	end
-	if value > self.maxValue then
-		BIOS.log(string.format("Util.lua: value %f is too large for address %d mask %d", value, self.address, self.mask))
+	if clean_value > self.maxValue then
+		Log:log_error(string.format("MemoryAllocation.lua: value %f (originally %f) is larger than max %d for %s (address %d mask %d)", clean_value, value, self.maxValue, self.debug_name or "n/a", self.address, self.mask))
 		return
 	end
-	assert(value >= 0)
-	assert(value <= self.maxValue)
-	if self.value ~= value then
-		self.value = value
+	assert(clean_value >= 0)
+	assert(clean_value <= self.maxValue)
+	if self.value ~= clean_value then
+		self.value = clean_value
 		self.memoryMapEntry.dirty = true
 	end
 end

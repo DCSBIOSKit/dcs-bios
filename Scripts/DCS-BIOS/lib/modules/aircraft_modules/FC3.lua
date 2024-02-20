@@ -1,9 +1,11 @@
 module("FC3", package.seeall)
 
-local Module = require("Module")
+local AircraftList = require("Scripts.DCS-BIOS.lib.AircraftList")
+
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class FC3: Module
-local FC3 = Module:new("FC3", 0x6000, BIOS.FLAMING_CLIFFS_AIRCRAFT)
+local FC3 = Module:new("FC3", 0x6000, AircraftList.FLAMING_CLIFFS_AIRCRAFT)
 
 local altitude = " -- "
 local altitude_ground_level = " ---- "

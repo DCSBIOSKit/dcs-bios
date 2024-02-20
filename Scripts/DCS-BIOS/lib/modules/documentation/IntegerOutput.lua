@@ -1,6 +1,6 @@
 module("IntegerOutput", package.seeall)
 
-local OutputType = require("OutputType")
+local OutputType = require("Scripts.DCS-BIOS.lib.modules.documentation.OutputType")
 
 --- @class IntegerOutput: Output
 --- @field mask integer
@@ -14,6 +14,10 @@ local IntegerOutput = {}
 --- @param description string
 --- @return IntegerOutput
 function IntegerOutput:new(allocation, suffix, description)
+	assert(allocation ~= nil)
+	assert(suffix ~= nil)
+	assert(description ~= nil)
+
 	--- @type IntegerOutput
 	local o = {
 		mask = allocation.mask,

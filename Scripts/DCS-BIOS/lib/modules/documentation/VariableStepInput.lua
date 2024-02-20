@@ -1,6 +1,6 @@
 module("VariableStepInput", package.seeall)
 
-local InputType = require("InputType")
+local InputType = require("Scripts.DCS-BIOS.lib.modules.documentation.InputType")
 
 --- @class VariableStepInput: SetStateInput
 --- @field suggested_step integer
@@ -12,6 +12,10 @@ local VariableStepInput = {}
 --- @param description string
 --- @return VariableStepInput
 function VariableStepInput:new(suggestedStep, maxValue, description)
+	assert(suggestedStep ~= nil)
+	assert(maxValue ~= nil)
+	assert(description ~= nil)
+
 	--- @type VariableStepInput
 	local o = {
 		interface = InputType.variable_step,

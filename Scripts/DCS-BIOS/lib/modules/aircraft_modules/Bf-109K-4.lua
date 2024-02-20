@@ -1,6 +1,6 @@
 module("Bf-109K-4", package.seeall)
 
-local Module = require("Module")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class Bf_109K_4: Module
 local Bf_109K_4 = Module:new("Bf-109K-4", 0x4200, { "Bf-109K-4" })
@@ -152,7 +152,8 @@ Bf_109K_4:defineFloat("STICKBANK", 106, { -1, 1 }, "Indicator", "StickBank")
 Bf_109K_4:defineFloat("RUDDERPEDALS", 102, { -1, 1 }, "Indicator", "RudderPedals")
 Bf_109K_4:defineFloat("CANOPY_TRUCKS", 162, { 0, 1 }, "Indicator", "Canopy_Trucks")
 Bf_109K_4:defineFloat("CANOPY_VISIBILITY", 163, { 0, 1 }, "Indicator", "Canopy_Visibility")
-Bf_109K_4:defineFloat("CANOPY_CRANK", 147, { 0, 1 }, "Indicator", "Canopy_Crank")
+-- Bf_109K_4:defineFloat("CANOPY_CRANK", 147, { 0, 1 }, "Indicator", "Canopy_Crank")
+Bf_109K_4:reserveIntValue(65535) -- above control uses a duplicate argument to PANEL_SHAKE_Y
 Bf_109K_4:defineFloat("LEFT_WHEEL_BRAKE", 103, { 0, 1 }, "Indicator", "Left_Wheel_Brake")
 Bf_109K_4:defineFloat("RIGHT_WHEEL_BRAKE", 104, { 0, 1 }, "Indicator", "Right_Wheel_Brake")
 Bf_109K_4:defineFloat("MW50_PRESSURE", 1, { 0, 1 }, "Indicator", "MW50_Pressure")
@@ -240,5 +241,7 @@ Bf_109K_4:defineIndicatorLight("BOMB_2_L", 67, "Indicator", "Bomb 2 Status Light
 Bf_109K_4:defineIndicatorLight("BOMB_3_L", 68, "Indicator", "Bomb 3 Status Light (white)")
 Bf_109K_4:defineIndicatorLight("BOMB_4_L", 69, "Indicator", "Bomb 4 Status Light (white)")
 Bf_109K_4:defineFloat("PANEL_GLOW", 79, { 0, 1 }, "Indicator", "Gauges Glow (green)")
+
+Bf_109K_4:defineReadWriteRadio("VHF_RADIO", 14, 6, 3, 1000, "VHF_RADIO")
 
 return Bf_109K_4

@@ -1,10 +1,10 @@
-local ControlType = require("ControlType")
-local MockDevice = require("MockDevice")
-local Module = require("Module")
-local OutputType = require("OutputType")
-local Suffix = require("Suffix")
+local ControlType = require("Scripts.DCS-BIOS.lib.modules.documentation.ControlType")
+local MockDevice = require("Scripts.DCS-BIOS.test.controls.MockDevice")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
+local OutputType = require("Scripts.DCS-BIOS.lib.modules.documentation.OutputType")
+local Suffix = require("Scripts.DCS-BIOS.lib.modules.documentation.Suffix")
 
-local lu = require("luaunit")
+local lu = require("Scripts.DCS-BIOS.test.ext.luaunit")
 
 --- @class Test8BitFloatFromGetterTest
 --- @field module Module
@@ -53,7 +53,7 @@ function Test8BitFloatFromGetterTest:testFloatFromGetter1Value()
 
 	local alloc = self.module.memoryMap.entries[moduleAddress].allocations[1]
 
-	export_hook()
+	export_hook(MockDevice:new(0))
 	lu.assertEquals(alloc.value, 255)
 end
 
@@ -67,7 +67,7 @@ function Test8BitFloatFromGetterTest:testFloatFromGetter0Value()
 
 	local alloc = self.module.memoryMap.entries[moduleAddress].allocations[1]
 
-	export_hook()
+	export_hook(MockDevice:new(0))
 	lu.assertEquals(alloc.value, 127)
 end
 
@@ -81,6 +81,6 @@ function Test8BitFloatFromGetterTest:testFloatFromGetterM1Value()
 
 	local alloc = self.module.memoryMap.entries[moduleAddress].allocations[1]
 
-	export_hook()
+	export_hook(MockDevice:new(0))
 	lu.assertEquals(alloc.value, 0)
 end

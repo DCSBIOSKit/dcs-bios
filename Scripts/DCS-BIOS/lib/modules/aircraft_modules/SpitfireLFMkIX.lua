@@ -1,6 +1,6 @@
 module("SpitfireLFMkIX", package.seeall)
 
-local Module = require("Module")
+local Module = require("Scripts.DCS-BIOS.lib.modules.Module")
 
 --- @class SpitfireLFMkIX: Module
 local SpitfireLFMkIX = Module:new("SpitfireLFMkIX", 0x5400, { "SpitfireLFMkIX", "SpitfireLFMkIXCW" })
@@ -103,9 +103,12 @@ SpitfireLFMkIX:defineToggleSwitch("HATCH_JETTISON", 1, 3057, 140, "Cockpit", "Je
 SpitfireLFMkIX:defineToggleSwitch("SIDE_DOOR", 1, 3059, 147, "Cockpit", "Side Door Open/Close Control")
 
 -- Indicators
-SpitfireLFMkIX:defineFloat("CANOPY_TRUCKS", 162, { 0, 1 }, "Indicator", "Canopy Trucks") --not Working
-SpitfireLFMkIX:defineFloat("CANOPY_VISIBILITY", 163, { 0, 1 }, "Indicator", "Canopy Visibility") --not Working
-SpitfireLFMkIX:defineFloat("CANOPY_CRANK", 147, { 0, 1 }, "Indicator", "Canopy Crank") --not Working
+-- SpitfireLFMkIX:defineFloat("CANOPY_TRUCKS", 162, { 0, 1 }, "Indicator", "Canopy Trucks") --not Working
+SpitfireLFMkIX:reserveIntValue(65535) -- these three items were commented out in the dcs luas
+-- SpitfireLFMkIX:defineFloat("CANOPY_VISIBILITY", 163, { 0, 1 }, "Indicator", "Canopy Visibility") --not Working
+SpitfireLFMkIX:reserveIntValue(65535)
+-- SpitfireLFMkIX:defineFloat("CANOPY_CRANK", 147, { 0, 1 }, "Indicator", "Canopy Crank") --not Working
+SpitfireLFMkIX:reserveIntValue(65535)
 SpitfireLFMkIX:defineFloat("OXYGENDELIVERYGAUGE", 11, { 0, 0.4 }, "Indicator", "Oxygen Delivery Gauge")
 SpitfireLFMkIX:defineFloat("OXYGENSUPPLYGAUGE", 12, { 0, 1 }, "Indicator", "Oxygen Supply Gauge")
 SpitfireLFMkIX:defineFloat("TRIMGAUGE", 17, { -1, 1 }, "Indicator", "Trim Gauge")
@@ -163,5 +166,7 @@ SpitfireLFMkIX:defineIndicatorLight("RADIO_B_LIGHT", 121, "Radio Lights", "Radio
 SpitfireLFMkIX:defineIndicatorLight("RADIO_C_LIGHT", 122, "Radio Lights", "Radio C Light (white)")
 SpitfireLFMkIX:defineIndicatorLight("RADIO_D_LIGHT", 123, "Radio Lights", "Radio D Light (white)")
 SpitfireLFMkIX:defineIndicatorLight("RADIO_TX_LIGHT", 124, "Radio Lights", "Radio TX Light (white)")
+
+SpitfireLFMkIX:defineReadWriteRadio("VHF_RADIO", 15, 7, 3, 1000, "VHF RADIO")
 
 return SpitfireLFMkIX

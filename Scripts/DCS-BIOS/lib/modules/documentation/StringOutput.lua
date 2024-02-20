@@ -1,6 +1,6 @@
 module("StringOutput", package.seeall)
 
-local OutputType = require("OutputType")
+local OutputType = require("Scripts.DCS-BIOS.lib.modules.documentation.OutputType")
 
 --- @class StringOutput: Output
 --- @field max_length integer
@@ -12,6 +12,10 @@ local StringOutput = {}
 --- @param description string
 --- @return StringOutput
 function StringOutput:new(allocation, suffix, description)
+	assert(allocation ~= nil)
+	assert(suffix ~= nil)
+	assert(description ~= nil)
+
 	--- @type StringOutput
 	local o = {
 		max_length = allocation.maxLength,

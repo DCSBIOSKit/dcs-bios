@@ -1,27 +1,34 @@
 module("Module", package.seeall)
 
-local ActionArgument = require("ActionArgument")
-local ActionInput = require("ActionInput")
-local ApiVariant = require("ApiVariant")
-local Control = require("Control")
-local ControlType = require("ControlType")
-local Documentation = require("Documentation")
-local FixedStepInput = require("FixedStepInput")
-local IntegerOutput = require("IntegerOutput")
-local MemoryMap = require("MemoryMap")
-local MomentaryPositions = require("MomentaryPositions")
-local PhysicalVariant = require("PhysicalVariant")
-local SetStateInput = require("SetStateInput")
-local StringOutput = require("StringOutput")
-local Suffix = require("Suffix")
-local VariableStepInput = require("VariableStepInput")
+local ActionArgument = require("Scripts.DCS-BIOS.lib.modules.documentation.ActionArgument")
+local ActionInput = require("Scripts.DCS-BIOS.lib.modules.documentation.ActionInput")
+local ApiVariant = require("Scripts.DCS-BIOS.lib.modules.documentation.ApiVariant")
+local Control = require("Scripts.DCS-BIOS.lib.modules.documentation.Control")
+local ControlType = require("Scripts.DCS-BIOS.lib.modules.documentation.ControlType")
+local Documentation = require("Scripts.DCS-BIOS.lib.modules.documentation.Documentation")
+local FixedStepInput = require("Scripts.DCS-BIOS.lib.modules.documentation.FixedStepInput")
+local Functions = require("Scripts.DCS-BIOS.lib.common.Functions")
+local IntegerOutput = require("Scripts.DCS-BIOS.lib.modules.documentation.IntegerOutput")
+local Log = require("Scripts.DCS-BIOS.lib.common.Log")
+local MemoryMap = require("Scripts.DCS-BIOS.lib.modules.memory_map.MemoryMap")
+local MomentaryPositions = require("Scripts.DCS-BIOS.lib.modules.documentation.MomentaryPositions")
+local PhysicalVariant = require("Scripts.DCS-BIOS.lib.modules.documentation.PhysicalVariant")
+local SetStateInput = require("Scripts.DCS-BIOS.lib.modules.documentation.SetStateInput")
+local SetStringInput = require("Scripts.DCS-BIOS.lib.modules.documentation.SetStringInput")
+local StringOutput = require("Scripts.DCS-BIOS.lib.modules.documentation.StringOutput")
+local Suffix = require("Scripts.DCS-BIOS.lib.modules.documentation.Suffix")
+local VariableStepInput = require("Scripts.DCS-BIOS.lib.modules.documentation.VariableStepInput")
+
+local function assert_min_max(array, name)
+	assert(#array == 2, string.format("%s may only contain a min and max value", name))
+end
 
 --- @class Module
 --- @field name string the name of the module
 --- @field documentation Documentation TODO
 --- @field inputProcessors { [string]: fun(value: string) } functions to run on receiving data
 --- @field memoryMap MemoryMap a map of all memory allocations for sending and receiving data
---- @field exportHooks fun(value: any)[] functions to run on sending data
+--- @field exportHooks fun(dev0: CockpitDevice)[] functions to run on sending data
 --- @field aircraftList string[] list of aircraft ids to export to
 local Module = {}
 
@@ -52,6 +59,117 @@ function Module:reserveIntValue(max_value)
 	self:allocateInt(max_value)
 end
 
+--- Uses SetCommand and set_argument_value instead of performClickableAction()
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param command integer the dcs command
+--- @param arg_number integer the dcs argument number
+--- @param step number the amount to increase or decrease dcs data by with each step
+--- @param limits number[] a length-2 array with the lower and upper bounds of the data as used in dcs
+--- @param output_map string[]? an array of string values to output for inputs across the range of values, or nil if none
+--- @param cycle boolean | "skiplast" true if infinite rotary, false if limited rotary, skiplast functionality unclear
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:defineSetCommandTumb(identifier, device_id, command, arg_number, step, limits, output_map, cycle, category, description)
+	local span = limits[2] - limits[1]
+	local last_n = tonumber(string.format("%.0f", span / step))
+	last_n = last_n or 0
+
+	local value_enum = output_map
+	if not value_enum then
+		value_enum = {}
+		local n = 0
+		while n <= last_n do
+			value_enum[#value_enum + 1] = tostring(n)
+			n = n + 1
+		end
+	end
+
+	local enumAlloc = self:allocateInt(last_n, identifier)
+	local strAlloc = nil
+	if output_map then
+		local max_len = 0
+		for i = 1, #output_map, 1 do
+			if max_len < output_map[i]:len() then
+				max_len = output_map[i]:len()
+			end
+		end
+		strAlloc = self:allocateString(max_len, identifier)
+	end
+
+	self:addExportHook(function(dev0)
+		local value = dev0:get_argument_value(arg_number)
+		local n = tonumber(string.format("%.0f", (value - limits[1]) / step))
+
+		if n > last_n then
+			n = last_n
+		end
+		if n == last_n and cycle == "skiplast" then
+			n = 0
+		end
+		enumAlloc:setValue(n)
+		if strAlloc and output_map then
+			strAlloc:setValue(output_map[n + 1])
+		end
+	end)
+
+	local max_value = last_n - (cycle == "skiplast" and 1 or 0)
+
+	local control = Control:new(category, ControlType.selector, identifier, description, {
+		FixedStepInput:new("switch to previous or next state"),
+		SetStateInput:new(max_value, "set position"),
+	}, {
+		IntegerOutput:new(enumAlloc, Suffix.none, "selector position"),
+	}, nil, cycle and PhysicalVariant.infinite_rotary or PhysicalVariant.limited_rotary)
+
+	if output_map and strAlloc then
+		control.outputs[1].suffix = Suffix.int
+
+		local description = "possible values: "
+		for i = 1, #output_map, 1 do
+			description = description .. '"' .. output_map[i] .. '" '
+		end
+
+		control.outputs[2] = StringOutput:new(strAlloc, Suffix.str, description)
+	end
+
+	self:addInputProcessor(identifier, function(state)
+		local value = GetDevice(0):get_argument_value(arg_number)
+		local n = tonumber(string.format("%.0f", (value - limits[1]) / step))
+		local new_n = n
+
+		if state == "INC" then
+			new_n = Module.cap(n + 1, 0, last_n, cycle)
+			if cycle == "skiplast" and new_n == last_n then
+				new_n = 0
+			end
+
+			GetDevice(device_id):SetCommand(command, limits[1] + step * new_n)
+			GetDevice(0):set_argument_value(arg_number, limits[1] + step * new_n)
+		elseif state == "DEC" then
+			new_n = Module.cap(n - 1, 0, last_n, cycle)
+			if cycle == "skiplast" and new_n == last_n then
+				new_n = last_n - 1
+			end
+
+			GetDevice(device_id):SetCommand(command, limits[1] + step * new_n)
+			GetDevice(0):set_argument_value(arg_number, limits[1] + step * new_n)
+		else
+			n = tonumber(string.format("%.0f", tonumber(state)))
+			if n == nil then
+				return
+			end
+			GetDevice(device_id):SetCommand(command, limits[1] + step * Module.cap(n, 0, last_n, cycle))
+			GetDevice(0):set_argument_value(arg_number, limits[1] + step * Module.cap(n, 0, last_n, cycle))
+		end
+	end)
+
+	self:addControl(control)
+
+	return control
+end
+
 --- Defines a gauge from floating-point data with limits. This generally is not used in any new modules and is used in existing modules to provide the integer output of a gauge
 --- @param identifier string the unique identifier for the control
 --- @param arg_number integer the dcs argument number
@@ -60,16 +178,73 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineGaugeValue(identifier, arg_number, output_range, category, description)
+	assert_min_max(output_range, "output_range")
 	assert(output_range[1] >= 0)
 
 	local max_value = 65535
-	local alloc = self:allocateInt(max_value)
+	local alloc = self:allocateInt(max_value, identifier)
 	self:addExportHook(function(dev0)
 		alloc:setValue(Module.valueConvert(dev0:get_argument_value(arg_number), { 0, 1 }, output_range))
 	end)
 
 	local control = Control:new(category, ControlType.metadata, identifier, description, {}, {
 		IntegerOutput:new(alloc, Suffix.none, description),
+	})
+	self:addControl(control)
+
+	return control
+end
+
+--- Adds an infitely-looping rotary, like an encoder, with a multiplier for the variable step
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param command integer the dcs command
+--- @param arg_number integer the dcs argument number
+--- @param step_multiplier number the amount to multiply the variable step by when applying an input
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:defineVariableStepTumb(identifier, device_id, command, arg_number, step_multiplier, category, description)
+	local max_value = 65535
+	self:addInputProcessor(identifier, function(value)
+		local delta = tonumber(value) / max_value * step_multiplier
+		GetDevice(device_id):performClickableAction(command, delta)
+	end)
+
+	local alloc = self:allocateInt(max_value, identifier)
+
+	local control = Control:new(category, ControlType.variable_step_dial, identifier, description, {
+		VariableStepInput:new(3200, max_value, description),
+	}, {
+		IntegerOutput:new(alloc, Suffix.none, "rotation of the knob (not the value being manipulated!)"),
+	})
+	self:addControl(control)
+
+	self:addExportHook(function(dev0)
+		alloc:setValue(dev0:get_argument_value(arg_number) * max_value)
+	end)
+
+	return control
+end
+
+--- @private
+--- Defines a gauge from floating-point data with limits
+--- @param identifier string the unique identifier for the control
+--- @param arg_number integer the dcs argument number
+--- @param max_value integer maximum possible value
+--- @param limits number[] a length-2 array with the lower and upper bounds of the data as used in dcs
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:defineFloatValue(identifier, arg_number, max_value, limits, category, description)
+	assert_min_max(limits, "limits")
+	local alloc = self:allocateInt(max_value, identifier)
+	self:addExportHook(function(dev0)
+		alloc:setValue(Module.valueConvert(dev0:get_argument_value(arg_number), limits, { 0, max_value }))
+	end)
+
+	local control = Control:new(category, ControlType.analog_gauge, identifier, description, {}, {
+		IntegerOutput:new(alloc, Suffix.none, "gauge position"),
 	})
 	self:addControl(control)
 
@@ -84,18 +259,20 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineFloat(identifier, arg_number, limits, category, description)
-	local max_value = 65535
-	local alloc = self:allocateInt(max_value)
-	self:addExportHook(function(dev0)
-		alloc:setValue(Module.valueConvert(dev0:get_argument_value(arg_number), limits, { 0, max_value }))
-	end)
+	assert_min_max(limits, "limits")
+	return self:defineFloatValue(identifier, arg_number, 65535, limits, category, description)
+end
 
-	local control = Control:new(category, ControlType.analog_gauge, identifier, description, {}, {
-		IntegerOutput:new(alloc, Suffix.none, "gauge position"),
-	})
-	self:addControl(control)
-
-	return control
+--- Adds a new Float but only but only allocates an 8-bit int. Max value is 255
+--- @param identifier string the unique identifier for the control
+--- @param argument_id integer the unique identifier for the control
+--- @param limits number[] a length-2 array with the lower and upper bounds of the data as used in dcs
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:define8BitFloat(identifier, argument_id, limits, category, description)
+	assert_min_max(limits, "limits")
+	return self:defineFloatValue(identifier, argument_id, 255, limits, category, description)
 end
 
 --- Adds a new Float but only but only allocates an 8-bit int. Max value is 255
@@ -107,8 +284,9 @@ end
 --- @return Control control the control which was added to the module
 function Module:define8BitFloatFromGetter(identifier, getter, limits, category, description)
 	-- same as defineFloat, but only allocates an 8-bit int
+	assert_min_max(limits, "limits")
 	local max_value = 255
-	local alloc = self:allocateInt(max_value)
+	local alloc = self:allocateInt(max_value, identifier)
 
 	self:addExportHook(function()
 		alloc:setValue(Module.valueConvert(getter(), limits, { 0, max_value }))
@@ -132,6 +310,16 @@ function Module:defineIndicatorLight(identifier, arg_number, category, descripti
 	return self:defineGatedIndicatorLight(identifier, arg_number, 0.3, nil, category, description)
 end
 
+--- Adds a new indicator light control which will enable the LED when the argument value is less than 0.3
+--- @param identifier string the unique identifier for the control
+--- @param arg_number integer the dcs argument number
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:defineIndicatorLightInverted(identifier, arg_number, category, description)
+	return self:defineGatedIndicatorLight(identifier, arg_number, nil, 0.3, category, description)
+end
+
 --- Adds a new indicator light control with specific min and max values for enabling the light
 --- @param identifier string the unique identifier for the control
 --- @param arg_number integer the dcs argument number
@@ -141,7 +329,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineGatedIndicatorLight(identifier, arg_number, min, max, category, description)
-	local alloc = self:allocateInt(1)
+	local alloc = self:allocateInt(1, identifier)
 
 	local control = Control:new(category, ControlType.led, identifier, description, {}, {
 		IntegerOutput:new(alloc, Suffix.none, "0 if light is off, 1 if light is on"),
@@ -189,9 +377,9 @@ end
 --- @return Control control the control which was added to the module
 function Module:definePotentiometer(identifier, device_id, command, arg_number, limits, category, description)
 	local max_value = 65535
-	if limits == nil then
-		limits = { 0, 1 }
-	end
+	limits = limits or { 0, 1 }
+	assert_min_max(limits, "limits")
+
 	local intervalLength = limits[2] - limits[1]
 	self:addInputProcessor(identifier, function(value)
 		local newValue = ((GetDevice(0):get_argument_value(arg_number) - limits[1]) / intervalLength) * max_value
@@ -204,7 +392,7 @@ function Module:definePotentiometer(identifier, device_id, command, arg_number, 
 		GetDevice(device_id):performClickableAction(command, newValue / max_value * intervalLength + limits[1])
 	end)
 
-	local value = self:allocateInt(max_value)
+	local value = self:allocateInt(max_value, identifier)
 
 	self:addExportHook(function(dev0)
 		value:setValue(((dev0:get_argument_value(arg_number) - limits[1]) / intervalLength) * max_value)
@@ -232,6 +420,45 @@ end
 function Module:defineToggleSwitch(identifier, device_id, command, arg_number, category, description)
 	local control = self:defineTumb(identifier, device_id, command, arg_number, 1, { 0, 1 }, nil, false, category, description)
 	control.physical_variant = PhysicalVariant.toggle_switch
+
+	return control
+end
+
+--- Adds a two-position toggle switch which always sends 1 as a clickable action, so long as the switch state requires a change
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param command integer the dcs command
+--- @param arg_number integer the dcs argument number
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control control the control which was added to the module
+function Module:defineToggleSwitchToggleOnly(identifier, device_id, command, arg_number, category, description)
+	local alloc = self:allocateInt(1, identifier)
+
+	local control = Control:new(category, ControlType.action, identifier, description, {
+		FixedStepInput:new("switch to previous or next state"),
+		SetStateInput:new(1, "set the switch position -- 0 = off, 1 = on"),
+		ActionInput:new(ActionArgument.toggle, "toggle switch state"),
+	}, {
+		IntegerOutput:new(alloc, Suffix.none, "selector position"),
+	}, MomentaryPositions.none, PhysicalVariant.toggle_switch)
+
+	self:addControl(control)
+
+	self:addInputProcessor(identifier, function(toState)
+		local fromState = GetDevice(0):get_argument_value(arg_number)
+		if
+			toState == "TOGGLE" -- if we're toggling, then always flip
+			or fromState == 0 and (toState == "1" or toState == "INC") -- flip if we're going from off to on
+			or fromState == 1 and (toState == "0" or toState == "DEC") -- flip if we're going from on to off
+		then
+			GetDevice(device_id):performClickableAction(command, 1)
+		end
+	end)
+
+	self:addExportHook(function(dev0)
+		alloc:setValue(dev0:get_argument_value(arg_number))
+	end)
 
 	return control
 end
@@ -267,7 +494,7 @@ function Module:defineRotary(identifier, device_id, command, arg_number, categor
 		GetDevice(device_id):performClickableAction(command, tonumber(value) / max_value)
 	end)
 
-	local value = self:allocateInt(max_value)
+	local value = self:allocateInt(max_value, identifier)
 
 	local control = Control:new(category, ControlType.analog_dial, identifier, description, {
 		VariableStepInput:new(3200, max_value, "turn the dial left or right"),
@@ -311,6 +538,8 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineFixedStepTumb(identifier, device_id, command, arg_number, step, limits, rel_args, output_map, category, description)
+	assert_min_max(limits, "limits")
+	assert_min_max(rel_args, "rel_args")
 	local control = self:defineTumb(identifier, device_id, command, arg_number, step, limits, output_map, true, category, description)
 	assert(control.inputs[2].interface == "set_state") -- todo: type if necessary
 	control.inputs[2] = nil
@@ -330,6 +559,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineFixedStepInput(identifier, device_id, command, rel_args, category, description)
+	assert_min_max(rel_args, "rel_args")
 	self:addFixedStepInputProcessor(identifier, device_id, command, rel_args[1], rel_args[2])
 	local control = Control:new(category, ControlType.fixed_step_dial, identifier, description, {
 		FixedStepInput:new("turn left or right"),
@@ -378,7 +608,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineString(identifier, getter, max_length, category, description)
-	local alloc = self:allocateString(max_length)
+	local alloc = self:allocateString(max_length, identifier)
 	self:addExportHook(function(dev0)
 		local value = getter(dev0) --ammo
 		if value == nil then
@@ -409,7 +639,7 @@ end
 --- @param description string additional information about the control
 --- @return Control
 function Module:defineRockerSwitch(identifier, device_id, pos_command, pos_stop_command, neg_command, neg_stop_command, arg_number, category, description)
-	local alloc = self:allocateInt(2)
+	local alloc = self:allocateInt(2, identifier)
 	self:addExportHook(function(dev0)
 		local lut = { [-1] = 0, [0] = 1, [1] = 2 }
 		alloc:setValue(lut[Module.round(dev0:get_argument_value(arg_number))])
@@ -435,6 +665,10 @@ function Module:defineRockerSwitch(identifier, device_id, pos_command, pos_stop_
 		end
 		local fromState = GetDevice(0):get_argument_value(arg_number)
 		local dev = GetDevice(device_id)
+		if dev == nil then
+			return
+		end
+
 		if fromState == 0 and toState == 1 then
 			dev:performClickableAction(pos_command, 1)
 		end
@@ -474,6 +708,8 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineRadioWheel(identifier, device_id, decrement_command, increment_command, rel_args, arg_number, step, limits, output_map, category, description)
+	assert_min_max(rel_args, "rel_args")
+	assert_min_max(limits, "limits")
 	local control = self:defineTumb(identifier, device_id, decrement_command, arg_number, step, limits, output_map, "skiplast", category, description)
 	assert(control.inputs[2].interface == "set_state")
 	control.inputs[2] = nil
@@ -520,7 +756,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineIntegerFromGetter(identifier, getter, maxValue, category, description)
-	local alloc = self:allocateInt(maxValue)
+	local alloc = self:allocateInt(maxValue, identifier)
 	self:addExportHook(function(dev0)
 		alloc:setValue(getter(dev0))
 	end)
@@ -547,6 +783,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineTumb(identifier, device_id, command, arg_number, step, limits, output_map, cycle, category, description)
+	assert_min_max(limits, "limits")
 	local span = limits[2] - limits[1]
 	local last_n = tonumber(string.format("%.0f", span / step))
 	assert(last_n)
@@ -565,7 +802,7 @@ function Module:defineTumb(identifier, device_id, command, arg_number, step, lim
 	--  also apparently anything with radio wheel
 	--  It's unclear if that should affect allocateInt.maxValue, so we'll leave that for the future
 	local max_value = last_n - (cycle == "skiplast" and 1 or 0)
-	local enumAlloc = self:allocateInt(max_value)
+	local enumAlloc = self:allocateInt(max_value, identifier)
 	local strAlloc = nil
 	if output_map then
 		local max_len = 0
@@ -574,7 +811,7 @@ function Module:defineTumb(identifier, device_id, command, arg_number, step, lim
 				max_len = output_map[i]:len()
 			end
 		end
-		strAlloc = self:allocateString(max_len)
+		strAlloc = self:allocateString(max_len, identifier)
 	end
 	self:addExportHook(function(dev0)
 		local value = dev0:get_argument_value(arg_number)
@@ -669,7 +906,7 @@ end
 --- @param description string additional information about the control
 --- @return Control control the control which was added to the module
 function Module:defineSpringloaded_3PosTumb(identifier, device_id, down_switch, up_switch, arg_number, category, description)
-	local alloc = self:allocateInt(2)
+	local alloc = self:allocateInt(2, identifier)
 	self:addExportHook(function(dev0)
 		local val = dev0:get_argument_value(arg_number)
 		if val == -1 then
@@ -691,6 +928,9 @@ function Module:defineSpringloaded_3PosTumb(identifier, device_id, down_switch, 
 
 	self:addInputProcessor(identifier, function(toState)
 		local dev = GetDevice(device_id)
+		if dev == nil then
+			return
+		end
 		if toState == "0" then --downSwitch
 			dev:performClickableAction(down_switch, 0)
 			dev:performClickableAction(up_switch, 0)
@@ -708,18 +948,134 @@ function Module:defineSpringloaded_3PosTumb(identifier, device_id, down_switch, 
 	return control
 end
 
+--- Defines an ejection handle switch which performs a clickable action 3 times to trigger the ejection sequence in-game
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param command integer the dcs command
+--- @param arg_number integer the dcs argument number
+--- @param category string the category in which the control should appear
+--- @param description string additional information about the control
+--- @return Control
+function Module:defineEjectionHandleSwitch(identifier, device_id, command, arg_number, category, description)
+	local alloc = self:allocateInt(1)
+	self:addExportHook(function(dev0)
+		if dev0:get_argument_value(arg_number) < 0.5 then
+			alloc:setValue(0)
+		else
+			alloc:setValue(1)
+		end
+	end)
+
+	local control = Control:new(category, ControlType.toggle_switch, identifier, description, {
+		SetStateInput:new(1, "set the switch position -- 0 = off, 1 = on"),
+	}, {
+		IntegerOutput:new(alloc, "", "switch position -- 0 = off, 1 = on"),
+	})
+
+	self:addControl(control)
+
+	self:addInputProcessor(identifier, function(toState)
+		local fromState = GetDevice(0):get_argument_value(arg_number)
+		if fromState == 0 and toState == "1" then
+			GetDevice(device_id):performClickableAction(command, 1)
+			GetDevice(device_id):performClickableAction(command, 1)
+			GetDevice(device_id):performClickableAction(command, 1)
+		end
+	end)
+
+	return control
+end
+
+--- Defines a control with an input for setting the frequency of a radio device and an output with the current radio frequency
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param max_length integer the max length of the reported frequency
+--- @param decimal_places integer the number of decimal places in the reported frequency (i.e. how far from the right to place the decimal point)
+--- @param scale_factor integer the amount to multiply the frequency by when setting, or divide by when getting
+--- @param description string additional information about the control
+--- @return Control
+function Module:defineReadOnlyRadio(identifier, device_id, max_length, decimal_places, scale_factor, description)
+	return self:defineRadio(identifier, device_id, max_length, decimal_places, scale_factor, true, description)
+end
+
+--- Defines a control with an input for setting the frequency of a radio device and an output with the current radio frequency
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param max_length integer the max length of the reported frequency
+--- @param decimal_places integer the number of decimal places in the reported frequency (i.e. how far from the right to place the decimal point)
+--- @param scale_factor integer the amount to multiply the frequency by when setting, or divide by when getting
+--- @param description string additional information about the control
+--- @return Control
+function Module:defineReadWriteRadio(identifier, device_id, max_length, decimal_places, scale_factor, description)
+	return self:defineRadio(identifier, device_id, max_length, decimal_places, scale_factor, false, description)
+end
+
+--- @private
+--- Defines a control with an input for setting the frequency of a radio device and an output with the current radio frequency
+--- @param identifier string the unique identifier for the control
+--- @param device_id integer the dcs device id
+--- @param max_length integer the max length of the reported frequency
+--- @param decimal_places integer the number of decimal places in the reported frequency (i.e. how far from the right to place the decimal point)
+--- @param scale_factor integer the amount to multiply the frequency by when setting, or divide by when getting
+--- @param read_only boolean whether the radio does not support set_frequency()
+--- @param description string additional information about the control
+--- @return Control
+function Module:defineRadio(identifier, device_id, max_length, decimal_places, scale_factor, read_only, description)
+	local alloc = self:allocateString(max_length, identifier)
+
+	local inputs = read_only and {} or { SetStringInput:new("The frequency to set, with or without a decimal place") }
+
+	local control = Control:new("Radio Frequencies", ControlType.radio, identifier, description, inputs, {
+		StringOutput:new(alloc, Suffix.none, "The current frequency the radio is set to"),
+	})
+	self:addControl(control)
+
+	if not read_only then
+		self:addInputProcessor(identifier, function(value)
+			local match_decimal = value:find("%.")
+			if match_decimal then
+				local decimal_padding = decimal_places - value:sub(match_decimal + 1):len()
+				if decimal_padding > 0 then
+					value = value .. string.rep("0", decimal_padding)
+				end
+				value = value:gsub("%.", "")
+			end
+
+			local freq = tonumber(value) -- convert to number
+
+			if not freq then
+				Log:log_error(string.format("Module.lua: Attempted to set nil frequency for control %s (source value %s)", identifier, value))
+				return
+			end
+
+			GetDevice(device_id):set_frequency(freq * scale_factor)
+		end)
+	end
+
+	self:addExportHook(function()
+		local frequency = tostring(math.floor(GetDevice(device_id):get_frequency() / scale_factor)) -- frequencies like 125.375 can come in as 125375435 (it's unknown what these last 3 digits are for)
+		local decimal_location = frequency:len() - decimal_places
+		frequency = Functions.pad_left(frequency:sub(1, decimal_location) .. "." .. frequency:sub(decimal_location + 1), max_length)
+		alloc:setValue(frequency)
+	end)
+
+	return control
+end
+
 --- Allocates space for a string to the memory map of the module
 --- @param max_length integer the maximum length of the string
+--- @param identifier string? the identifier of the control being allocated
 --- @return StringAllocation alloc the space allocated for the string
-function Module:allocateString(max_length)
-	return self.memoryMap:allocateString(max_length)
+function Module:allocateString(max_length, identifier)
+	return self.memoryMap:allocateString(max_length, string.format("%s:%s", self.name, identifier or ""))
 end
 
 --- Allocates space for an integer to the memory map of the module
 --- @param max_value integer the maximum value of the integer
+--- @param identifier string? the identifier of the control being allocated
 --- @return MemoryAllocation alloc the space allocated for the integer
-function Module:allocateInt(max_value)
-	return self.memoryMap:allocateInt(max_value)
+function Module:allocateInt(max_value, identifier)
+	return self.memoryMap:allocateInt(max_value, string.format("%s:%s", self.name, identifier or ""))
 end
 
 --- Adds an export hook to the module
@@ -742,9 +1098,18 @@ function Module:addControl(control)
 	-- todo: move this further down?
 	if control.outputs then
 		for _, output in ipairs(control.outputs) do
-			output.address_identifier = self:addressDefineIdentifier(control.identifier) .. "_A"
-			output.address_mask_identifier = self:addressDefineIdentifier(control.identifier) .. "_AM"
-			output.address_mask_shift_identifier = self:addressDefineIdentifier(control.identifier)
+			if output.type == "integer" then -- DcsBios::IntegerBuffer
+				--- @cast output IntegerOutput
+				output.address_mask_shift_identifier = self:addressDefineIdentifier(control.identifier)
+				if output.max_value == 1 then -- DcsBios::LED
+					output.address_mask_identifier = self:addressDefineIdentifier(control.identifier) .. "_AM"
+				elseif output.max_value == 65535 then -- DcsBios::ServoOutput
+					output.address_identifier = self:addressDefineIdentifier(control.identifier) .. "_A"
+				end
+			elseif output.type == "string" then -- DcsBios::StringBuffe
+				--- @cast output StringOutput
+				output.address_identifier = self:addressDefineIdentifier(control.identifier) .. "_A"
+			end
 		end
 	end
 
@@ -760,6 +1125,103 @@ function Module:addressDefineIdentifier(identifier)
 	full_identifier = full_identifier:gsub("_+", "_") -- Replace successive underscores with a single _
 
 	return full_identifier
+end
+
+local indication_split = "-----------------------------------------"
+local children_start_block = "children are {"
+local children_end_block = "}"
+
+--- @enum ParseIndicationState
+local ParseIndicationState = {
+	none = "none",
+	child_block = "child_block",
+	item_block = "item_block",
+}
+
+--- Parses a dcs indication from a string into a key-value table, or nil if no data is available
+--- Values are separated with "-----------------------------------------\n"
+--- @param indicator_id integer
+--- @return {[string|integer]: string}
+function Module.parse_indication(indicator_id)
+	local ret = {}
+	local indication = list_indication(indicator_id)
+	--- @type ParseIndicationState[]
+	local state = {}
+	--- @type string?
+	local key = nil
+	--- @type string[]
+	local current_block_lines = {}
+	local total_values = 0
+
+	---@return ParseIndicationState
+	local function current_state()
+		return #state > 0 and state[#state] or ParseIndicationState.none
+	end
+
+	local function add_block_to_result()
+		if not key then
+			return
+		end
+
+		local value = ""
+		while #current_block_lines > 0 do
+			if value ~= "" then
+				value = value .. "\n"
+			end
+			value = value .. table.remove(current_block_lines, 1)
+		end
+		ret[key] = value -- if there's nothing, then we intentionally add an empty string
+		total_values = total_values + 1
+		ret[total_values] = value
+
+		key = nil
+	end
+
+	-- state machine to process indication
+	for line in string.gmatch(indication, "([^\n]+)") do
+		if line == indication_split then
+			-- start a new item block
+			if current_state() ~= ParseIndicationState.item_block then -- don't insert this if we're already in a block - state is already accurate
+				table.insert(state, ParseIndicationState.item_block)
+			else
+				-- write old item and start a new one
+				add_block_to_result()
+			end
+		elseif line == children_start_block then
+			-- start a new child block
+			if current_state() == ParseIndicationState.item_block then
+				table.remove(state)
+			end
+			table.insert(state, ParseIndicationState.child_block)
+			add_block_to_result() -- it's unclear if these items will never have values and are only for child blocks, so we'll add it to be safe
+		elseif line == children_end_block and #state > 0 then
+			-- end a child block if we're in one
+			if current_state() == ParseIndicationState.item_block then
+				-- write old item and start a new one
+				add_block_to_result()
+				table.remove(state)
+			end
+			if current_state() == ParseIndicationState.child_block then
+				table.remove(state)
+			end
+		elseif line and current_state() == ParseIndicationState.item_block then
+			-- these are actual line contents we need to deal with
+			if key then
+				table.insert(current_block_lines, line)
+			else
+				key = line
+			end
+		end
+	end
+
+	if current_state() == ParseIndicationState.item_block then
+		add_block_to_result()
+		table.remove(state)
+	end
+
+	ret[0] = total_values
+
+	return ret
 end
 
 --- Returns a vlue that is between the limits provided
@@ -795,14 +1257,39 @@ function Module.round(num)
 	return num >= 0 and math.floor(num + 0.5) or math.ceil(num - 0.5)
 end
 
---- @func Maps value to from input_range to output_range
+--- rounds a number to certain decimal place
+--- @param num number the number to round
+--- @param decimal_places integer
+--- @return number
+function Module.round2(num, decimal_places)
+	return tonumber(string.format("%." .. (decimal_places or 0) .. "f", num)) or 0
+end
+
+--- Maps value to from input_range to output_range
 --- @param argument_value number the number to map
 --- @param input_range number[] a length-2 array of the range of the input value
 --- @param output_range number[] a length-2 array of the range the value should be mapped to
 --- @return number
 function Module.valueConvert(argument_value, input_range, output_range)
+	assert_min_max(input_range, "input_range")
+	assert_min_max(output_range, "output_range")
 	local slope = 1.0 * (output_range[2] - output_range[1]) / (input_range[2] - input_range[1])
 	return output_range[1] + slope * (argument_value - input_range[1])
+end
+
+--- Returns an integer from individual arguments ordered from least to most significant digit
+--- @param dev0 CockpitDevice dcs device 0
+--- @param arguments integer[] dcs arguments
+--- @return integer
+function Module.build_gauge_from_arguments(dev0, arguments)
+	local result = 0
+
+	for index, value in ipairs(arguments) do
+		local arg_value = Module.round(dev0:get_argument_value(value) * 10) % 10 -- treat 10 as 0
+		result = result + arg_value * math.pow(10, index - 1)
+	end
+
+	return result
 end
 
 return Module
